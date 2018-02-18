@@ -17,6 +17,9 @@ all: rtl2udp
 rtl2udp: $(OBJECT)
 	$(CC) -o rtl2udp $(OBJECT) -lm
 
+install: rtl2udp
+	cp rtl2udp /usr/local/bin
+
 .c.o:
 	$(CC) $(CFLAGS) -c $<
 		
