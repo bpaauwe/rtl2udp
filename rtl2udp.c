@@ -126,13 +126,10 @@ int main (int argc, char **argv)
 			}
 		}
 
-
 skip_message:
 		cJSON_Delete(msg_json);
-		//printf("%s", line);
-		//
 	}
-
+	return 0;
 }
 
 
