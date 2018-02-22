@@ -61,6 +61,8 @@ static double in2mm(double in) {
 	return round((in * 25.4) * 10) / 10;
 }
 
+static int debug = 0;
+
 int main (int argc, char **argv)
 {
 	char line[512];
@@ -68,9 +70,25 @@ int main (int argc, char **argv)
 	const cJSON *field;
 	struct air_data air;
 	struct sky_data sky;
+	int i;
 
 	air.time = time(NULL);
 	sky.time = time(NULL);
+
+	if (argc > 1) {
+		for(i = 1; i < argc; i++) {
+			if (argv[i][0] == '-') { /* An option */
+				switch (argv[i][1]) {
+					case 'd': /* debug */
+						debug = 1;
+						break;
+					default:
+						printf("usage: %s [-d]\n", argv[0]);
+						break;
+				}
+			}
+		}
+	}
 
 	while (fp_getline(stdin, line, 512)) {
 		msg_json = cJSON_Parse(line);
@@ -292,8 +310,10 @@ static void send_json(char *packet)
 	struct sockaddr_in s;
 	int ret;
 
-	printf("Attempting to broadcast\n");
-	printf("%s\n", packet);
+	if (debug) {
+		printf("Attempting to broadcast\n");
+		printf("%s\n", packet);
+	}
 
 	bcast_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	ret = setsockopt(bcast_sock, SOL_SOCKET, SO_BROADCAST,
@@ -399,6 +419,12 @@ static void get_lux(struct sky_data *sky)
 
 	/* Return the visible only reading */
 	sky->illumination = (double)(ch0 - ch1);
+
+	if (debug) {
+		printf("Full : %d lux\n", ch0);
+		printf("IR   : %d lux\n", ch1);
+		printf("VIS  : %d lux\n", (ch0 - ch1));
+	}
 
 end_lux:
 	close(i2c);
@@ -526,7 +552,8 @@ static void get_pressure(struct air_data *air)
 		(((double)temp / 131072) - (bmp_280->T1 / 8192)) * bmp_280->T3;
 	t_fine = var1 + var2;
 
-	//printf("Indoor temp = %.1f F\n", (((t_fine / 5120) * 1.8) + 32));
+	if (debug)
+		printf("Indoor temp = %.1f F\n", (((t_fine / 5120) * 1.8) + 32));
 
 	/* Pressure calculation */
 	pres = (((long)data[0] << 16) | ((long)data[1] << 8) |
@@ -546,7 +573,8 @@ static void get_pressure(struct air_data *air)
 	var2 = p * bmp_280->P8 / 32768;
 
 	pressure = (p + (var1 + var2 + bmp_280->P7) / 16) / 100;
-	//printf("Pressure = %.1f hPa\n", pressure);
+	if (debug)
+		printf("Pressure = %.1f hPa\n", pressure);
 
 	/*
 	 * This is station pressure.  If we want sea level, it will need
