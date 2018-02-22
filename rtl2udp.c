@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <time.h>
 #include <pthread.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
 #include "cJSON.h"
 
 struct air_data {
@@ -42,6 +44,8 @@ static void parse_sky(cJSON *msg_json, struct sky_data *data);
 static void publish_air(struct air_data *data);
 static void publish_sky(struct sky_data *sky_data);
 static void send_json(char *packet);
+static void get_pressure(struct air_data *air);
+static void get_lux(struct sky_data *sky);
 
 static double tempc(double tempf) {
 	return round(((tempf  - 32) / 1.8) * 10) / 10;
@@ -113,10 +117,12 @@ int main (int argc, char **argv)
 			switch (field->valueint) {
 				case 56:
 					parse_air(msg_json, &air);
+					get_pressure(&air);
 					publish_air(&air);
 					break;
 				case 49:
 					parse_sky(msg_json, &sky);
+					get_lux(&sky);
 					publish_sky(&sky);
 					break;
 				default:
@@ -329,4 +335,144 @@ static int fp_getline(FILE *fp, char *s, int lim)
 	} else {
 		return(i);
 	}
+}
+
+static void get_lux(struct sky_data *sky)
+{
+}
+
+struct bmp_280_calibration {
+	double T1;
+	double T2;
+	double T3;
+	double P1;
+	double P2;
+	double P3;
+	double P4;
+	double P5;
+	double P6;
+	double P7;
+	double P8;
+	double P9;
+};
+
+#define COEF(d, i) { \
+	d = (double)(data[i+1] * 256 + data[i]); \
+	if (d > 32767) \
+		d -= 65536; \
+}
+
+static struct bmp_280_calibration *bmp_280 = NULL;
+static void get_pressure(struct air_data *air)
+{
+	int i2c;
+	unsigned char reg[1];
+	unsigned char config[2];
+	unsigned char data[24];
+	long pres;
+	long temp;
+	double var1, var2, p, pressure, t_fine;
+
+	/* Open the I2C bus */
+	i2c = open("/dev/i2c-1", O_RDWR);
+	if (i2c < 0) {
+		fprintf(stderr, "Failed to open I2C bus.\n");
+		return;
+	}
+
+	/* Connect to the BMP280 device (address = 0x77) */
+	ioctl(i2c, I2C_SLAVE, 0x77);
+
+	/* Get coefficient data for the sensors, but do it only once */
+	if (!bmp_280) {
+		bmp_280 = (struct bmp_280_calibration *)
+			malloc(sizeof(struct bmp_280_calibration));
+
+		/* Read calibration data */
+		reg[0] = 0x88;
+		if (write(i2c, reg, 1) < 0)
+			goto end_pres;
+
+		if (write(i2c, data, 24) > 0) {
+			/* temperature coefficents */
+			bmp_280->T1 = (double)(data[1] * 256 + data[0]);
+			COEF(bmp_280->T2, 2);
+			COEF(bmp_280->T3, 4);
+
+			/* pressure coefficents */
+			bmp_280->P1 = (double)(data[7] * 256 + data[6]);
+			COEF(bmp_280->P2, 8);
+			COEF(bmp_280->P3, 10);
+			COEF(bmp_280->P4, 12);
+			COEF(bmp_280->P5, 14);
+			COEF(bmp_280->P6, 16);
+			COEF(bmp_280->P7, 18);
+			COEF(bmp_280->P8, 20);
+			COEF(bmp_280->P9, 22);
+		} else {
+			free (bmp_280);
+			fprintf(stderr, "Failed to read coefficent data.\n");
+			goto end_pres;
+		}
+	}
+
+	/*
+	 * Control measurement register
+	 *  - norma mode
+	 *  - over sample rate = 1
+	 */
+	config[0] = 0xF4;
+	config[1] = 0x27;
+	if (write(i2c, config, 2) < 0)
+		fprintf(stderr, "Failed to write control measurement register.\n");
+
+	/*
+	 * Config register
+	 *  - standby time = 1000ms
+	 */
+	config[0] = 0xF5;
+	config[1] = 0xA0;
+	if (write(i2c, config, 2) < 0)
+		fprintf(stderr, "Failed to write control measurement register.\n");
+
+	//sleep(1);
+
+	/* Read temp and pressure data */
+	reg[0] = 0xF7;
+	if (write(i2c, data, 8) < 0)
+		goto end_pres;
+
+	/* Temperature calculation */
+	temp = (((long)data[3] << 16) | ((long)data[4] << 8) |
+			((long)data[5] & 0xF0)) / 16;
+
+	var1 = (((double)temp / 16384) - (bmp_280->T1 / 1024)) * bmp_280->T2;
+	var2 = (((double)temp / 131072) - (bmp_280->T1 / 8192)) *
+		(((double)temp / 131072) - (bmp_280->T1 / 8192)) * bmp_280->T3;
+	t_fine = var1 + var2;
+
+	printf("Indoor temp = %.1f F\n", (((t_fine / 5120) * 1.8) + 32));
+
+	/* Pressure calculation */
+	pres = (((long)data[0] << 16) | ((long)data[1] << 8) |
+			((long)data[2] & 0xF0)) / 16;
+
+	var1 = (t_fine / 2) - 64000;
+	var2 = var1 * var1 * (bmp_280->P6 / 32768);
+	var2 = var2 + var1 * (bmp_280->P5 * 2);
+	var2 = (var2 / 4) + (bmp_280->P4 * 65536);
+	var1 = (bmp_280->P3 * var1 * var1 / 524288 + bmp_280->P2 * var1) / 524288;
+	var1 = (1 + var1 / 32768) * bmp_280->P1;
+
+	p = 1048576 - pres;
+	p = (p - (var2 / 4096)) * 6250 / var1;
+
+	var1 = bmp_280->P9 * p * p / 2147483648;
+	var2 = p * bmp_280->P8 / 32768;
+
+	pressure = (p + (var1 + var2 + bmp_280->P7) / 16) / 100;
+	printf("Pressure = %.1f hPa\n", pressure);
+
+end_pres:
+	return;
 }
