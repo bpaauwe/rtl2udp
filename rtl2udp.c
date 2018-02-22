@@ -38,6 +38,7 @@ struct sky_data {
 	int time;
 	int interval;
 	int precip_type;
+	double prev_rainfall;
 };
 
 static int fp_getline(FILE *fp, char *s, int lim);
@@ -193,10 +194,6 @@ static void parse_air(cJSON *msg_json, struct air_data *air_data)
 
 	air_data->interval = time(NULL) - air_data->time;
 	air_data->time = time(NULL);
-
-	/* TODO: Read pressure sensor */
-	air_data->pressure = 998.3;
-
 }
 
 static void parse_sky(cJSON *msg_json, struct sky_data *sky_data)
@@ -227,10 +224,24 @@ static void parse_sky(cJSON *msg_json, struct sky_data *sky_data)
 	if (field)
 		sky_data->wind_direction = field->valuedouble;
 
+	/*
+	 * TODO: Is this right?
+	 *
+	 * Rainfall may accumulate until there's a sample
+	 * period with no rain.  Thus we may need to track
+	 * the previous value and report only the difference.
+	 */
 	field = cJSON_GetObjectItemCaseSensitive(msg_json,
 			"rainfall_accumulation_inch");
 	if (field) {
-		sky_data->rainfall = in2mm(field->valuedouble);
+		printf("Rainfall from 5n1 = %f\"\n", field->valuedouble);
+		if (field->valuedouble == 0) {
+			sky_data->prev_rainfall = 0;
+		} else {
+			sky_data->rainfall =
+				in2mm(field->valuedouble - sky_data->prev_rainfall);
+			sky_data->prev_rainfall = field->valuedouble;
+		}
 		if (sky_data->rainfall > 0)
 			sky_data->precip_type = 1;
 	}
