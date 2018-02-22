@@ -32,6 +32,7 @@ struct sky_data {
 	double gust_speed;
 	double wind_direction;
 	double rainfall;
+	double illumination;
 	double battery;
 	int sensor;
 	int time;
@@ -260,7 +261,7 @@ static void publish_sky(struct sky_data *sky_data)
 	obs = cJSON_AddArrayToObject(sky, "obs");
 	ob = cJSON_AddArrayToObject(obs, "");
 	cJSON_AddNumberToObject(ob, "", sky_data->time); /* Time Epoch */
-	cJSON_AddNumberToObject(ob, "", 0);  /* Illuminance  */
+	cJSON_AddNumberToObject(ob, "", sky_data->illumination); /* Lux  */
 	cJSON_AddNumberToObject(ob, "", 0);  /* UV */
 	cJSON_AddNumberToObject(ob, "", sky_data->rainfall);
 	cJSON_AddNumberToObject(ob, "", 0);  /* Wind Lull */
@@ -339,6 +340,63 @@ static int fp_getline(FILE *fp, char *s, int lim)
 
 static void get_lux(struct sky_data *sky)
 {
+	int i2c;
+	unsigned char reg[1];
+	unsigned char config[2];
+	unsigned char data[24];
+	int ch0, ch1;
+
+	/* Open the I2C bus */
+	i2c = open("/dev/i2c-1", O_RDWR);
+	if (i2c < 0) {
+		fprintf(stderr, "Failed to open I2C bus.\n");
+		return;
+	}
+
+	/* Connect to the BMP280 device (address = 0x39) */
+	ioctl(i2c, I2C_SLAVE, 0x39);
+
+	/*
+	 * Power on mode
+	 */
+	config[0] = 0x00 | 0x80;
+	config[1] = 0x03;
+	if (write(i2c, config, 2) < 0)
+		fprintf(stderr, "Failed to write control measurement register.\n");
+
+	/*
+	 * timing register
+	 *  - Mominal integration time = 402ms
+	 */
+	config[0] = 0x01 | 0x80;
+	config[1] = 0x02;
+	if (write(i2c, config, 2) < 0)
+		fprintf(stderr, "Failed to write control measurement register.\n");
+
+	sleep(1);
+
+	/* Read Lux data */
+	reg[0] = 0x0C | 0x80;
+	if (write(i2c, reg, 1) < 0)
+		goto end_lux;
+
+	if (read(i2c, data, 4) < 0)
+		goto end_lux;
+
+	/*
+	 * ch0 is full spectrum (IR + Visible)
+	 * ch1 is IR only
+	 * ch0 - ch1 is visible only
+	 */
+	ch0 = data[1] * 256 + data[0];
+	ch1 = data[3] * 256 + data[2];
+
+	/* Return the visible only reading */
+	sky->illumination = (double)(ch0 - ch1);
+	
+end_lux:
+	close(i2c);
+	return;
 }
 
 struct bmp_280_calibration {
@@ -393,7 +451,7 @@ static void get_pressure(struct air_data *air)
 		if (write(i2c, reg, 1) < 0)
 			goto end_pres;
 
-		if (write(i2c, data, 24) > 0) {
+		if (read(i2c, data, 24) > 0) {
 			/* temperature coefficents */
 			bmp_280->T1 = (double)(data[1] * 256 + data[0]);
 			COEF(bmp_280->T2, 2);
@@ -435,23 +493,30 @@ static void get_pressure(struct air_data *air)
 	if (write(i2c, config, 2) < 0)
 		fprintf(stderr, "Failed to write control measurement register.\n");
 
-	//sleep(1);
+	sleep(1);
 
 	/* Read temp and pressure data */
 	reg[0] = 0xF7;
-	if (write(i2c, data, 8) < 0)
+	if (write(i2c, reg, 1) < 0)
+		goto end_pres;
+
+	if (read(i2c, data, 8) < 0)
 		goto end_pres;
 
 	/* Temperature calculation */
 	temp = (((long)data[3] << 16) | ((long)data[4] << 8) |
 			((long)data[5] & 0xF0)) / 16;
+	/*
+	temp = (((long)data[3] * 65536) | ((long)data[4] * 256) |
+			((long)data[5] & 0xF0)) / 16;
+			*/
 
 	var1 = (((double)temp / 16384) - (bmp_280->T1 / 1024)) * bmp_280->T2;
 	var2 = (((double)temp / 131072) - (bmp_280->T1 / 8192)) *
 		(((double)temp / 131072) - (bmp_280->T1 / 8192)) * bmp_280->T3;
 	t_fine = var1 + var2;
 
-	printf("Indoor temp = %.1f F\n", (((t_fine / 5120) * 1.8) + 32));
+	//printf("Indoor temp = %.1f F\n", (((t_fine / 5120) * 1.8) + 32));
 
 	/* Pressure calculation */
 	pres = (((long)data[0] << 16) | ((long)data[1] << 8) |
@@ -471,8 +536,15 @@ static void get_pressure(struct air_data *air)
 	var2 = p * bmp_280->P8 / 32768;
 
 	pressure = (p + (var1 + var2 + bmp_280->P7) / 16) / 100;
-	printf("Pressure = %.1f hPa\n", pressure);
+	//printf("Pressure = %.1f hPa\n", pressure);
+
+	/*
+	 * This is station pressure.  If we want sea level, it will need
+	 * to be converted.
+	 */
+	air->pressure = pressure;
 
 end_pres:
+	close(i2c);
 	return;
 }
