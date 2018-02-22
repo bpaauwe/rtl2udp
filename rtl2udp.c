@@ -37,6 +37,7 @@ struct sky_data {
 	int sensor;
 	int time;
 	int interval;
+	int precip_type;
 };
 
 static int fp_getline(FILE *fp, char *s, int lim);
@@ -207,8 +208,11 @@ static void parse_sky(cJSON *msg_json, struct sky_data *sky_data)
 
 	field = cJSON_GetObjectItemCaseSensitive(msg_json,
 			"rainfall_accumulation_inch");
-	if (field)
+	if (field) {
 		sky_data->rainfall = in2mm(field->valuedouble);
+		if (sky_data->rainfall > 0)
+			sky_data->precip_type = 1;
+	}
 
 	sky_data->interval = time(NULL) - sky_data->time;
 	sky_data->time = time(NULL);
@@ -238,7 +242,7 @@ static void publish_air(struct air_data *air_data)
 	cJSON_AddNumberToObject(ob, "", 0);  /* Lightning Strike Avg Distance */
 	cJSON_AddNumberToObject(ob, "", air_data->battery);
 	cJSON_AddNumberToObject(ob, "", air_data->interval);
-	cJSON_AddNumberToObject(air, "firmware_revision", 17);
+	cJSON_AddNumberToObject(air, "firmware_revision", 35);
 
 	send_json(cJSON_Print(air));
 
@@ -272,7 +276,9 @@ static void publish_sky(struct sky_data *sky_data)
 	cJSON_AddNumberToObject(ob, "", sky_data->interval);
 	cJSON_AddNumberToObject(ob, "", 0);  /* Solar Radiation */
 	cJSON_AddNumberToObject(ob, "", 0);  /* Local Day Rain */
-	cJSON_AddNumberToObject(sky, "firmware_revision", 17);
+	cJSON_AddNumberToObject(ob, "", sky_data->precip_type);
+	cJSON_AddNumberToObject(ob, "", 0);  /* wind sample interval */
+	cJSON_AddNumberToObject(sky, "firmware_revision", 35);
 
 	send_json(cJSON_Print(sky));
 
@@ -393,7 +399,7 @@ static void get_lux(struct sky_data *sky)
 
 	/* Return the visible only reading */
 	sky->illumination = (double)(ch0 - ch1);
-	
+
 end_lux:
 	close(i2c);
 	return;
@@ -414,6 +420,10 @@ struct bmp_280_calibration {
 	double P9;
 };
 
+/*
+ * These values are in the device as 16 bit signed shorts
+ * Use this macro to convert them to doubles.
+ */
 #define COEF(d, i) { \
 	d = (double)(data[i+1] * 256 + data[i]); \
 	if (d > 32767) \
