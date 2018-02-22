@@ -80,7 +80,10 @@ int main (int argc, char **argv)
 			if (argv[i][0] == '-') { /* An option */
 				switch (argv[i][1]) {
 					case 'd': /* debug */
-						debug = 1;
+						if (++i < argc)
+							debug = atoi(argv[++i]);
+						else
+							debug = 1;
 						break;
 					default:
 						printf("usage: %s [-d]\n", argv[0]);
@@ -310,7 +313,7 @@ static void send_json(char *packet)
 	struct sockaddr_in s;
 	int ret;
 
-	if (debug) {
+	if (debug > 1) {
 		printf("Attempting to broadcast\n");
 		printf("%s\n", packet);
 	}
