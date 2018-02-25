@@ -73,8 +73,10 @@ int main (int argc, char **argv)
 	struct air_data air;
 	struct sky_data sky;
 	int i;
-	int seq_no, m_type, seq_handled;
+	int seq_no, m_type;
 	char *ts;
+	int seq_56 = 0, seq_49 = 0;
+
 
 	air.time = time(NULL);
 	sky.time = time(NULL);
@@ -135,12 +137,6 @@ int main (int argc, char **argv)
 		printf("%s Message type %d of %d recieved.\n", ts, m_type, seq_no);
 		free(ts);
 
-		/*
-		 * what if we don't see the sequence 0 message? Can we track that
-		 * we've processed one and skip the rest?
-		 */
-		if (seq_no > seq_handled)
-			goto skip_message;
 
 		/* Parse info based on message type? */
 		/*
@@ -159,21 +155,26 @@ int main (int argc, char **argv)
 		 */
 		switch (m_type) {
 			case 56:
-				parse_air(msg_json, &air);
-				get_pressure(&air);
-				publish_air(&air);
+				if (seq_no <= seq_56) {
+					parse_air(msg_json, &air);
+					get_pressure(&air);
+					publish_air(&air);
+				}
+				seq_56 = seq_no;
 				break;
 			case 49:
-				parse_sky(msg_json, &sky);
-				get_lux(&sky);
-				publish_sky(&sky);
+				if (seq_no <= seq_49) {
+					parse_sky(msg_json, &sky);
+					get_lux(&sky);
+					publish_sky(&sky);
+				}
+				seq_49 = seq_no;
 				break;
 			default:
 				printf("Message type %d\n", field->valueint);
 				printf("%s\n\n", line);
 				break;
 		}
-		seq_handled = seq_no;
 
 skip_message:
 		cJSON_Delete(msg_json);
