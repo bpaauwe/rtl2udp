@@ -49,6 +49,7 @@ static void publish_sky(struct sky_data *sky_data);
 static void send_json(char *packet);
 static void get_pressure(struct air_data *air);
 static void get_lux(struct sky_data *sky);
+static char *time_stamp(void);
 
 static double tempc(double tempf) {
 	return round(((tempf  - 32) / 1.8) * 10) / 10;
@@ -72,6 +73,8 @@ int main (int argc, char **argv)
 	struct air_data air;
 	struct sky_data sky;
 	int i;
+	int seq_no, m_type, seq_handled;
+	char *ts;
 
 	air.time = time(NULL);
 	sky.time = time(NULL);
@@ -116,12 +119,28 @@ int main (int argc, char **argv)
 		}
 		*/
 		field = cJSON_GetObjectItemCaseSensitive(msg_json, "sequence_num");
-		if (field && (field->valueint != 0))
-			continue;
+		if (field)
+			seq_no = field->valueint;
+		else
+			goto skip_message;
+
 
 		field = cJSON_GetObjectItemCaseSensitive(msg_json, "message_type");
-		if (field) {
-			printf("type: %d\n", field->valueint);
+		if (field)
+			m_type = field->valueint;
+		else
+			goto skip_message;
+
+		ts = time_stamp();
+		printf("%s Message type %d of %d recieved.\n", ts, m_type, seq_no);
+		free(ts);
+
+		/*
+		 * what if we don't see the sequence 0 message? Can we track that
+		 * we've processed one and skip the rest?
+		 */
+		if (seq_no > seq_handled)
+			goto skip_message;
 
 		/* Parse info based on message type? */
 		/*
@@ -138,23 +157,23 @@ int main (int argc, char **argv)
 		 *   "rainfall_accumulation_inch" : 0.000,
 		 *   raincounter_raw" : 0
 		 */
-			switch (field->valueint) {
-				case 56:
-					parse_air(msg_json, &air);
-					get_pressure(&air);
-					publish_air(&air);
-					break;
-				case 49:
-					parse_sky(msg_json, &sky);
-					get_lux(&sky);
-					publish_sky(&sky);
-					break;
-				default:
-					printf("Message type %d\n", field->valueint);
-					printf("%s\n\n", line);
-					break;
-			}
+		switch (m_type) {
+			case 56:
+				parse_air(msg_json, &air);
+				get_pressure(&air);
+				publish_air(&air);
+				break;
+			case 49:
+				parse_sky(msg_json, &sky);
+				get_lux(&sky);
+				publish_sky(&sky);
+				break;
+			default:
+				printf("Message type %d\n", field->valueint);
+				printf("%s\n\n", line);
+				break;
 		}
+		seq_handled = seq_no;
 
 skip_message:
 		cJSON_Delete(msg_json);
@@ -600,3 +619,20 @@ end_pres:
 	close(i2c);
 	return;
 }
+
+static char *time_stamp(void)
+{
+	time_t t = time(NULL);
+	struct tm gt;
+	char *ts = (char *)malloc(25);;
+
+	localtime_r(&t, &gt);
+
+	sprintf(ts, "%4d-%02d-%02d %02d:%02d:%02d",
+			gt.tm_year + 1900, gt.tm_mon + 1, gt.tm_mday,
+			gt.tm_hour, gt.tm_min, gt.tm_sec);
+
+	return ts;
+}
+
+
