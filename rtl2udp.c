@@ -41,11 +41,14 @@ struct sky_data {
 	double prev_rainfall;
 };
 
+
 static int fp_getline(FILE *fp, char *s, int lim);
 static void parse_air(cJSON *msg_json, struct air_data *data);
 static void parse_sky(cJSON *msg_json, struct sky_data *data);
 static void publish_air(struct air_data *data);
 static void publish_sky(struct sky_data *sky_data);
+static void parse_tower(cJSON *msg_json, struct air_data *tower);
+static void publish_tower(struct air_data *tower_data);
 static void send_json(char *packet);
 static void get_pressure(struct air_data *air);
 static void get_lux(struct sky_data *sky);
@@ -72,6 +75,7 @@ int main (int argc, char **argv)
 	const cJSON *field;
 	struct air_data air;
 	struct sky_data sky;
+	struct air_data tower;
 	int i;
 	int seq_no, m_type;
 	char *ts;
@@ -80,6 +84,7 @@ int main (int argc, char **argv)
 
 	air.time = time(NULL);
 	sky.time = time(NULL);
+	tower.time = time(NULL);
 
 	if (argc > 1) {
 		for(i = 1; i < argc; i++) {
@@ -112,14 +117,15 @@ int main (int argc, char **argv)
 
 
 		field = cJSON_GetObjectItemCaseSensitive(msg_json, "model");
-		/*
 		if (cJSON_IsString(field) && (field->valuestring != NULL)) {
-			if (strcmp(field->valuestring, "Acurite 5n1 sensor"))
+			if (strcmp(field->valuestring, "Acurite tower sensor") == 0) {
+				parse_tower(msg_json, &tower);
+				get_pressure(&tower);
+				publish_tower(&tower);
 				goto skip_message;
-
-			printf("Model: %s\n", field->valuestring);
+			}
 		}
-		*/
+
 		field = cJSON_GetObjectItemCaseSensitive(msg_json, "sequence_num");
 		if (field)
 			seq_no = field->valueint;
@@ -270,6 +276,30 @@ static void parse_sky(cJSON *msg_json, struct sky_data *sky_data)
 	sky_data->time = time(NULL);
 }
 
+static void parse_tower(cJSON *msg_json, struct air_data *tower)
+{
+	cJSON *field;
+
+	field= cJSON_GetObjectItemCaseSensitive(msg_json, "id");
+	if (field)
+		tower->sensor = field->valueint;
+
+	field= cJSON_GetObjectItemCaseSensitive(msg_json, "temperature_C");
+	if (field)
+		tower->temperature = field->valuedouble;
+
+	field= cJSON_GetObjectItemCaseSensitive(msg_json, "humidity");
+	if (field)
+		tower->humidity = field->valuedouble;
+
+	field= cJSON_GetObjectItemCaseSensitive(msg_json, "battery");
+	if (field)
+		tower->battery = field->valuedouble;
+
+	tower->interval = time(NULL) - tower->time;
+	tower->time = time(NULL);
+}
+
 
 static void publish_air(struct air_data *air_data)
 {
@@ -335,6 +365,36 @@ static void publish_sky(struct sky_data *sky_data)
 	send_json(cJSON_Print(sky));
 
 	cJSON_Delete(sky);
+}
+
+static void publish_tower(struct air_data *tower_data)
+{
+	cJSON *tower = NULL;
+	cJSON *obs = NULL;
+	cJSON *ob = NULL;
+	char serial_number[15];
+
+	sprintf(serial_number, "ACU-%d", tower_data->sensor);
+	tower = cJSON_CreateObject();
+
+	cJSON_AddStringToObject(tower, "serial_number", serial_number);
+	cJSON_AddStringToObject(tower, "type", "obs_tower");
+	cJSON_AddStringToObject(tower, "hub_sn", "5n1");
+	obs = cJSON_AddArrayToObject(tower, "obs");
+	ob = cJSON_AddArrayToObject(obs, "");
+	cJSON_AddNumberToObject(ob, "", tower_data->time); /* Time Epoch */
+	cJSON_AddNumberToObject(ob, "", tower_data->pressure);
+	cJSON_AddNumberToObject(ob, "", tower_data->temperature);
+	cJSON_AddNumberToObject(ob, "", tower_data->humidity);
+	cJSON_AddNumberToObject(ob, "", 0);  /* Lightning Strike Count */
+	cJSON_AddNumberToObject(ob, "", 0);  /* Lightning Strike Avg Distance */
+	cJSON_AddNumberToObject(ob, "", tower_data->battery);
+	cJSON_AddNumberToObject(ob, "", tower_data->interval);
+	cJSON_AddNumberToObject(tower, "firmware_revision", 35);
+
+	send_json(cJSON_Print(tower));
+
+	cJSON_Delete(tower);
 }
 
 static void send_json(char *packet)
