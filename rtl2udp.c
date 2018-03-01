@@ -242,7 +242,7 @@ static void parse_sky(cJSON *msg_json, struct sky_data *sky_data)
 	if (field) {
 		sky_data->wind_speed = mph2ms(field->valuedouble);
 
-		if (sky_data->wind_speed > sky_data->gust_speed)
+		//if (sky_data->wind_speed > sky_data->gust_speed)
 			sky_data->gust_speed = sky_data->wind_speed;
 	}
 
