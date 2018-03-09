@@ -359,7 +359,7 @@ static void publish_sky(struct sky_data *sky_data)
 	cJSON_AddNumberToObject(ob, "", 0);  /* Solar Radiation */
 	cJSON_AddNumberToObject(ob, "", 0);  /* Local Day Rain */
 	cJSON_AddNumberToObject(ob, "", sky_data->precip_type);
-	cJSON_AddNumberToObject(ob, "", 0);  /* wind sample interval */
+	cJSON_AddNumberToObject(ob, "", cJSON_NULL);  /* wind sample interval */
 	cJSON_AddNumberToObject(sky, "firmware_revision", 35);
 
 	send_json(cJSON_Print(sky));
