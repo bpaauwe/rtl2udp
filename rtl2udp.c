@@ -308,7 +308,7 @@ static void publish_air(struct air_data *air_data)
 	cJSON *ob = NULL;
 	char serial_number[15];
 
-	sprintf(serial_number, "ACU-%d", air_data->sensor);
+	sprintf(serial_number, "ACUAIR-%d", air_data->sensor);
 	air = cJSON_CreateObject();
 
 	cJSON_AddStringToObject(air, "serial_number", serial_number);
@@ -338,7 +338,7 @@ static void publish_sky(struct sky_data *sky_data)
 	cJSON *ob = NULL;
 	char serial_number[15];
 
-	sprintf(serial_number, "ACU-%d", sky_data->sensor);
+	sprintf(serial_number, "ACUSKY-%d", sky_data->sensor);
 	sky = cJSON_CreateObject();
 
 	cJSON_AddStringToObject(sky, "serial_number", serial_number);
